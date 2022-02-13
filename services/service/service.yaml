@@ -123,12 +123,12 @@ Resources:
               Value: !Ref ProxyServiceUrl
             - Name: DATABASE_SERVICE_URL
               Value: !Ref DatabaseServiceUrl
-            - Name: AWS_ACCESS_KEY_ID
+            #- Name: AWS_ACCESS_KEY_ID
               #!Sub ${GitlabRepo}-secret-${Tier}-${AWS::Region}
-              Value: test_key_id
-            - Name: AWS_SECRET_ACCESS_KEY
+              #Value: test_key_id
+            #- Name: AWS_SECRET_ACCESS_KEY
               #!Sub ${GitlabRepo}-secret-${Tier}-${AWS::Region}
-              Value: test_access_key
+              #Value: test_access_key
           PortMappings:
             - ContainerPort: !Ref ContainerPort
           LogConfiguration:
