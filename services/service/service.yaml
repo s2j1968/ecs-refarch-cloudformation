@@ -2,6 +2,48 @@ Description: >
   This is an example of a long running ECS service that needs to connect to another ECS service (proxy/DB)
   via it's load balancer. We use environment variables to pass the URL of the product-service to this one's container(s).
 Parameters:
+  Certificate:
+    Type: String
+    # Update with the certificate ARN from Certificate Manager, which must exist in the same region.
+    #Default: 'arn:aws:acm:region:123456789012:certificate/00000000-0000-0000-0000-000000000000'
+    Default: 'arn:aws:acm:us-east-1:956898766801:certificate/04315cf8-b6f8-4c1a-9a73-865b7854f8f0'
+  
+  ServiceImage:
+    Type: String
+    # Update with the Docker image. "You can use images in the Docker Hub registry or specify other repositories (repository-url/image:tag)."
+    #Default: 123456789012.dkr.ecr.region.amazonaws.com/image:tag
+    Default: moneybots/moneybots-private:service-api-image
+  
+  RepoSecret:
+    Type: String
+    Default: 'arn:aws:secretsmanager:us-east-1:956898766801:secret:dockerhub-private-pOiWBZ'
+    
+  ProxyImage:
+    Type: String
+    # Update with the Docker image. "You can use images in the Docker Hub registry or specify other repositories (repository-url/image:tag)."
+    #Default: 123456789012.dkr.ecr.region.amazonaws.com/image:tag
+    Default: moneybots/moneybots-public:alpaca-proxy-agent
+    
+  HostedZoneName:
+    Type: String
+    Default: moneybots.ai
+    
+  Subdomain:
+    Type: String
+    Default: www
+    
+  ContainerPort:
+    Type: Number
+    Default: 80
+    
+  ProxyPort:
+    Type: Number
+    Default: 8765
+    
+  LoadBalancerPort:
+    Type: Number
+    Default: 443
+    
   VPC:
     Description: The VPC that the ECS cluster is deployed to
     Type: AWS::EC2::VPC::Id
@@ -20,8 +62,12 @@ Parameters:
     Type: Number
     Default: 1
 
-  ProductServiceUrl:
-    Description: The URL of the Product Service (used to fetch product information)
+  ProxyServiceUrl:
+    Description: The URL of the Alpaca Proxy Service
+    Type: String
+    
+  DatabaseServiceUrl:
+    Description: The URL of the Database Service
     Type: String
 
   Listener:
@@ -36,6 +82,11 @@ Parameters:
   ECSServiceAutoScalingRoleARN:
     Description: The ECS service auto scaling role ARN
     Type: String
+    
+  LogRetentionPeriod:
+    Description: How many days should the logs be maintained in cloudwatch?
+    Type: Number
+    Default: 1
 
 Resources:
   Service:
@@ -47,41 +98,67 @@ Resources:
       DesiredCount: !Ref DesiredCount
       TaskDefinition: !Ref TaskDefinition
       LoadBalancers:
-        - ContainerName: "service"
-          ContainerPort: 80
+        - ContainerName: !Join ['', [!Ref ServiceName, Service]]
+          ContainerPort: !Ref ContainerPort
           TargetGroupArn: !Ref TargetGroup
 
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
-      Family: service
+      Family: !Join ['', [!Ref ServiceName, TaskDefinition]]
+       # "There is an optional task execution IAM role that you can specify with Fargate to allow your Fargate tasks to make API calls to Amazon ECR."
+      ExecutionRoleArn: !Ref ExecutionRole
+      # "The Amazon Resource Name (ARN) of an AWS Identity and Access Management (IAM) role that grants containers in the task permission to call AWS APIs on your behalf."
+      TaskRoleArn: !Ref TaskRole
       ContainerDefinitions:
-        - Name: service
+        - Name: !Ref ServiceName
           Essential: true
-          Image: 275396840892.dkr.ecr.us-east-1.amazonaws.com/ecs-refarch-cloudformation/website-service:1.0.0
+          #Image: 275396840892.dkr.ecr.us-east-1.amazonaws.com/ecs-refarch-cloudformation/website-service:1.0.0
+          Image: !Ref ServiceImage
+          RepositoryCredentials:
+            CredentialsParameter: !Ref RepoSecret
           Memory: 128
-          #Environment:
-          #  - Name: PRODUCT_SERVICE_URL
-          #    Value: !Ref ProductServiceUrl
+          Environment:
+            - Name: PROXY_SERVICE_URL
+              Value: !Ref ProxyServiceUrl
+            - Name: DATABASE_SERVICE_URL
+              Value: !Ref DatabaseServiceUrl
+            - Name: AWS_ACCESS_KEY_ID
+              #!Sub ${GitlabRepo}-secret-${Tier}-${AWS::Region}
+              Value: test_key_id
+            - Name: AWS_SECRET_ACCESS_KEY
+              #!Sub ${GitlabRepo}-secret-${Tier}-${AWS::Region}
+              Value: test_access_key
           PortMappings:
-            - ContainerPort: 80
+            - ContainerPort: !Ref ContainerPort
           LogConfiguration:
             LogDriver: awslogs
             Options:
               awslogs-group: !Ref CloudWatchLogsGroup
               awslogs-region: !Ref AWS::Region
+        - Name: !Ref ProxyName
+          Image: !Ref ProxyImage
+          PortMappings:
+            - ContainerPort: !Ref ProxyPort
+          # Send logs to CloudWatch Logs
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref LogGroup
+              awslogs-stream-prefix: proxy
 
   CloudWatchLogsGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Ref AWS::StackName
-      RetentionInDays: 365
+      RetentionInDays: !Ref LogRetentionPeriod
 
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       VpcId: !Ref VPC
-      Port: 80
+      Port: !Ref ContainerPort
       Protocol: HTTP
       Matcher:
         HttpCode: 200-299
@@ -104,6 +181,31 @@ Resources:
         - TargetGroupArn: !Ref TargetGroup
           Type: forward
 
+   ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ['', [!Ref ServiceName, ExecutionRole]]
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'
+        
+  # A role for the containers
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ['', [!Ref ServiceName, TaskRole]]
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+            
   # This IAM Role grants the service access to register/unregister with the
   # Application Load Balancer (ALB). It is based on the default documented here:
   # http://docs.aws.amazon.com/AmazonECS/latest/developerguide/service_IAM_role.html
