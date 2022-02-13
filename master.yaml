@@ -58,17 +58,28 @@ Resources:
         SecurityGroup: !GetAtt SecurityGroups.Outputs.ECSHostSecurityGroup
         Subnets: !GetAtt VPC.Outputs.PrivateSubnets
 
-  ProductService:
+  #ProductService:
+  #  Type: AWS::CloudFormation::Stack
+  #  Properties:
+  #    TemplateURL: https://ecs-ec2-cft-templates.s3.amazonaws.com/ecs-refarch-cloudformation/services/product-service/service.yaml
+  #    Parameters:
+  #      VPC: !GetAtt VPC.Outputs.VPC
+  #      Cluster: !GetAtt ECS.Outputs.Cluster
+  #      DesiredCount: 1
+  #      Listener: !GetAtt ALB.Outputs.Listener
+  #      Path: /products
+
+  DatabaseService:
     Type: AWS::CloudFormation::Stack
     Properties:
-      TemplateURL: https://ecs-ec2-cft-templates.s3.amazonaws.com/ecs-refarch-cloudformation/services/product-service/service.yaml
+      TemplateURL: https://ecs-ec2-cft-templates.s3.amazonaws.com/ecs-refarch-cloudformation/services/database-service/database-service.yaml
       Parameters:
         VPC: !GetAtt VPC.Outputs.VPC
         Cluster: !GetAtt ECS.Outputs.Cluster
         DesiredCount: 1
         Listener: !GetAtt ALB.Outputs.Listener
-        Path: /products
-
+        Path: /
+  
   WebsiteService:
     Type: AWS::CloudFormation::Stack
     Properties:
@@ -77,8 +88,8 @@ Resources:
         VPC: !GetAtt VPC.Outputs.VPC
         Cluster: !GetAtt ECS.Outputs.Cluster
         DesiredCount: 1
-        ProductServiceUrl:
-          !Join ["/", [!GetAtt ALB.Outputs.LoadBalancerUrl, "products"]]
+        DatabaseServiceUrl:
+          !Join ["/", [!GetAtt ALB.Outputs.LoadBalancerUrl, "database"]]
         Listener: !GetAtt ALB.Outputs.Listener
         Path: /
         ECSServiceAutoScalingRoleARN: !GetAtt ECS.Outputs.ECSServiceAutoScalingRole
